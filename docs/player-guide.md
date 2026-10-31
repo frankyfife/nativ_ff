@@ -152,6 +152,23 @@ as owned. If you haven't chosen an online name, Nativ asks for one the first tim
 
 The F10 menu's Game page shows whether you're linked to other players.
 
+## Texture packs
+
+A game's textures can be saved as PNG files and replaced with your own, such as upscaled ones, without touching the
+game's files. Both happen in the game's folder in your library, `decrypted/<title id>/recomp/`.
+
+1. **Dump.** Add `texture_dump = 1` to that folder's `settings.ini` (or start with `RECOMP_TEX_DUMP=1`) and play. Each
+   texture is saved once, the first time the game loads it, to `texdump/` as `<key>.png`. The key is the texture's
+   checksum, size and format, such as `d4d0c863_1024x256_83000000`.
+2. **Name them (Uncharted).** `dev/texnames.py <gamedata.bin> --sort texdump <folder>` copies the dump into the game's
+   own folders and names, such as `game/ui/textures/mm_game_logo_fi__d4d0c863_1024x256_83000000.png`.
+3. **Replace.** Put your pictures in `texpack/`, in any subfolders, keeping the key at the end of each name. They can
+   be any size: keep the original's proportions, for example 1024x256 upscaled to 4096x1024. The next start draws them
+   instead, on your GPU only, so the game's memory isn't affected. `RECOMP_TEX_REPLACE=0` turns a pack off.
+
+Cube maps and floating-point textures aren't dumped or replaced. Turn dumping off again when you're done: it adds a
+moment to each new texture.
+
 ## Saves
 
 Each game's saves live in your library, at `decrypted/<title id>/recomp/fs/savedata0/`. Nativ keeps them when you

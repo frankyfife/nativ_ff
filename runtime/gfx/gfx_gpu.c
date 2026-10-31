@@ -32,6 +32,7 @@
 #include "metrics.h"
 #include "settings.h"
 #include "ssao.h"
+#include "texpack.h"   /* texture packs: dumping and replacing textures (texpack.c) */
 #ifdef RECOMP_MTL_ARCHIVE
 #include "mtl_archive.h"   /* this machine's archive of Metal's compiles (macOS) */
 #endif
@@ -1026,6 +1027,7 @@ typedef struct { uint32_t addr, format, width, height; int layout; int stale, bc
 	 * re-hashes every page (and closes them again); nchk: re-checks in frame chk_frame */
 	uint32_t span, wclock, nph; uint64_t *ph; int hot, streak, calm, full, nchk; uint64_t big_frame, chk_frame;
 	uint64_t chash; int levels; uint64_t bytes;
+	int repl, rw, rh, dumped;   /* repl: a texture pack's picture (rw x rh) is what the GPU texture holds (texpack.c); dumped: texpack_dump asked once */
 	uint8_t sx, sy; } TexEntry;   /* sx, sy: a view's texels a guest pixel (its source's scale: target_scale) */   /* chash/levels: the uploaded bytes' hash over the whole span and its mip count (get_texture: a texture that moved) */   /* samp[min][mag][addrmode_u][addrmode_v]; layout: GfxTexture's (3 = cube: a 6-layer cube texture) */
 /* The texture table: up to MAXTEX entries and tex_budget() bytes of GPU textures (an estimate per entry, TexEntry.bytes), the
  * least recently used one replaced past either. It was a fixed 512 entries: a Killzone area that samples more than that a
@@ -1276,6 +1278,31 @@ static void tring_end(SDL_GPUCommandBuffer *cmd, uint32_t lo, uint32_t hi) {   /
 	if (ntring_use == NTRING_USE) { SDL_WaitForGPUFences(gpu(), true, &tring_use[0].f, 1); SDL_ReleaseGPUFence(gpu(), tring_use[0].f); memmove(tring_use, tring_use + 1, sizeof tring_use[0] * (size_t)--ntring_use); }
 	tring_use[ntring_use++] = (TringUse){ f, lo, hi, tring_lap };
 }
+/* a texture pack's picture (RGBA8, any size) as e's GPU texture, its mip chain made on the GPU (texpack.c) */
+static int upload_replacement(TexEntry *e, const uint8_t *px, int w, int h) {
+	int levels = 1; for (int m = w > h ? w : h; m > 1; m >>= 1) levels++;
+	if (e->tex && !(e->repl && e->rw == w && e->rh == h)) { SDL_ReleaseGPUTexture(gpu(), e->tex); e->tex = 0; }   /* (batch_retire'd by the caller) */
+	if (!e->tex) {
+		SDL_GPUTextureCreateInfo tci = { .type = SDL_GPU_TEXTURETYPE_2D, .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+			.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET, .width = (Uint32)w, .height = (Uint32)h, .layer_count_or_depth = 1, .num_levels = (Uint32)levels, .sample_count = SDL_GPU_SAMPLECOUNT_1 };
+		e->tex = SDL_CreateGPUTexture(gpu(), &tci);
+		if (!e->tex) { fprintf(stderr, "    gpu: texture pack picture %dx%d for %#x: SDL_CreateGPUTexture failed (%s): the game's own instead\n", w, h, e->addr, SDL_GetError()); e->repl = 0; return 0; }
+	}
+	SDL_GPUTransferBufferCreateInfo xci = { .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = (Uint32)w * (Uint32)h * 4 };
+	SDL_GPUTransferBuffer *xb = SDL_CreateGPUTransferBuffer(gpu(), &xci);
+	if (!xb) { SDL_ReleaseGPUTexture(gpu(), e->tex); e->tex = 0; e->repl = 0; return 0; }
+	void *map = SDL_MapGPUTransferBuffer(gpu(), xb, false); memcpy(map, px, (size_t)w * h * 4); SDL_UnmapGPUTransferBuffer(gpu(), xb);
+	SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu()); SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cmd);
+	SDL_GPUTextureTransferInfo src = { .transfer_buffer = xb, .pixels_per_row = (Uint32)w, .rows_per_layer = (Uint32)h };
+	SDL_GPUTextureRegion dst = { .texture = e->tex, .w = (Uint32)w, .h = (Uint32)h, .d = 1 };
+	SDL_UploadToGPUTexture(cp, &src, &dst, false);
+	SDL_EndGPUCopyPass(cp);
+	if (levels > 1) SDL_GenerateMipmapsForGPUTexture(cmd, e->tex);
+	SDL_SubmitGPUCommandBuffer(cmd); SDL_ReleaseGPUTransferBuffer(gpu(), xb);
+	e->repl = 1; e->rw = w; e->rh = h; e->bc = 0;
+	static int said; if (!said++) fprintf(stderr, "    gpu: texture pack in use (first: %#x %ux%u drawn as %dx%d)\n", e->addr, e->width, e->height, w, h);
+	return 1;
+}
 static void upload_texture(TexEntry *e, const GfxTexture *t) {
 	int cube = ((t->u_mode >> 4) & 3) == 3, levels = cube ? gfx_texture_cube_levels(t) : gfx_texture_levels(t), layers = cube ? 6 : 1;
 	e->chash = hash_bytes(G(t->data), e->span); e->levels = levels;   /* what the GPU texture holds (~10 us for 256 KB) */
@@ -1283,6 +1310,16 @@ static void upload_texture(TexEntry *e, const GfxTexture *t) {
 	batch_retire(e->tex, "texture re-upload");   /* its own command buffer runs before the pending draws that sampled the old content */
 	e->layout = (t->u_mode >> 4) & 3;
 	n_tex_uploads++;
+	{	/* texture packs (texpack.c): the pack's picture instead, and each new texture saved once while dumping (an entry's
+		 * re-uploads -- a movie's frames, a CPU-drawn atlas -- not again) */
+		char key[40];
+		if (!cube && !wide && texpack_on() && texpack_key(t, key)) {
+			int rw, rh; uint8_t *px = texpack_replacement(key, &rw, &rh);
+			if (px) { int ok = upload_replacement(e, px, rw, rh); free(px); if (ok) return; }
+			if (!e->dumped) { e->dumped = 1; texpack_dump(t, key); }
+		}
+		if (e->repl) { if (e->tex) SDL_ReleaseGPUTexture(gpu(), e->tex); e->tex = 0; e->repl = 0; }   /* (its bytes changed: the game's own again) */
+	}
 	SDL_GPUTextureFormat bc = tex_bc_format(t, cube);
 	if (bc != SDL_GPU_TEXTUREFORMAT_INVALID) {
 		/* the cache re-uploads in place only for the same address/format/size, which makes the same
@@ -1378,8 +1415,8 @@ decode:
 /* TexEntry.bytes, and the table's total: its GPU texture's size, about (BC counted at a byte a texel, the most it takes; mips
  * a third more) */
 static void tex_account(TexEntry *e) {
-	const uint64_t px = (uint64_t)e->width * e->height * (e->layout == 3 ? 6 : 1);
-	const uint64_t b = e->tex ? (e->bc ? px : px * (tex_wide(e->format) ? 16 : 4)) * 4 / 3 : 0;
+	const uint64_t px = e->repl ? (uint64_t)e->rw * e->rh : (uint64_t)e->width * e->height * (e->layout == 3 ? 6 : 1);
+	const uint64_t b = e->tex ? (e->bc && !e->repl ? px : px * (tex_wide(e->format) && !e->repl ? 16 : 4)) * 4 / 3 : 0;
 	tex_bytes += b - e->bytes; e->bytes = b;
 }
 /* ---- change detection. The CPU rewrites textures in place -- Unit 13 draws its menu text into a
