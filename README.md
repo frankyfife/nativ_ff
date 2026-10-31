@@ -6,6 +6,41 @@ Project Nativ turns PS Vita games into native programs for macOS, Linux and Wind
 game. The tools recompile it on your machine, and it runs like any other program, with extras the Vita never had:
 higher resolutions, wider screens, 60 fps and mouse aiming, depending on the game.
 
+## What this fork adds
+
+This is a fork of [TheLostPantheon/nativ](https://github.com/TheLostPantheon/nativ). On top of it:
+
+**Uncharted: Golden Abyss**
+
+- **The 1.03 update plays.** Sony rebuilt its main program with a newer SDK, so every hook was ported by hand and
+  checked against 1.00's code. The guest addresses the hooks' host code uses are per release (`GAME_ADDRS`).
+- **1.00's shaders under 1.03.** The update also recompiled both shader bundles; some of the new programs fell back
+  to the software renderer (very slow frames) and skinned attachments drew away from the body.
+  `dev/uc_shaders103.py` puts 1.00's bundles, the same programs in the same order, into a copy of the update's
+  `patch.bin`.
+- **Other languages.** The EU release's main program is byte-identical to the US one (1.00 and 1.03), so a US copy
+  plays with the EU release's `gamedata.bin` and `patch.bin`, which carry German, French, Italian, Dutch and UK
+  English voices and text. `RECOMP_LANGUAGE` sets the system language the game sees; the pack uses 4, German.
+- **Debug menu** (1.03, experimental): the community's one-byte debug-menu patch as a game option, off by default.
+  With it on the game can hang after a cutscene or a death.
+
+**Pictures and sound**
+
+- **Texture packs.** Every texture can be saved as a PNG (`texture_dump`) and replaced by a PNG of any size in
+  `texpack/`, for example an upscaled one. Replacements live on the host GPU only, so the game's memory is untouched.
+  `dev/texnames.py` names a dump after the game's own files (Uncharted's `gamedata.bin`).
+- **Texture filters.** Gamma, saturation and sharpening for a game's colour maps, leaving normal maps, masks and the
+  HUD alone. Set in the launcher's game settings or the in-game menu.
+- **Sound.** Bass, treble and stereo width after the game's mix, with a soft limiter: Vita mixes were made for the
+  handheld's speakers and can sound thin on a big system. Defaults are a light lift (+3 dB, +6 dB, 1.2).
+- **Anti-aliasing.** The launcher offers FSR 3.1 as well as FXAA, as the in-game menu does.
+
+**Big displays**
+
+- The launcher and the in-game menu scale with the display, readable on a 4K TV from the couch (`ATIV_UI_SCALE`,
+  `RECOMP_UI_SCALE` fix the factor).
+- Fixed font sizes scaled twice on displays with a scale above 1, which ran headings and titles past their frames.
+
 ## How it works
 
 A Vita game is ARM code written against Sony's system software. Nativ handles the two separately.
@@ -28,7 +63,7 @@ copy of each game and Sony's firmware update file, and the tools decrypt and rec
 | Game | Release | Title ID | Versions |
 |---|---|---|---|
 | Killzone: Mercenary | US | PCSA00107 | 1.00, 1.12 (recommended: Botzone and online play) |
-| Uncharted: Golden Abyss | US | PCSA00029 | 1.00 |
+| Uncharted: Golden Abyss | US (EU data too) | PCSA00029 | 1.00, 1.03 |
 | Unit 13 | US | PCSA00014 | 1.00 |
 | Shovel Knight | US | PCSE00640 | 1.00 |
 
@@ -36,8 +71,8 @@ Each game's pack supports exact releases, recognised by the SHA-256 of the game'
 such as Killzone's physics fix or the widescreen cameras, patch code at fixed addresses, so they only fit the build
 they were written for. Your game data doesn't need to match; the main program does.
 
-Not supported yet: other regions (EU, JP, Asia) and the later updates of Uncharted (1.03), Unit 13 (1.01) and Shovel
-Knight (1.08, Treasure Trove). The launcher recognises them and tells you which release it supports. It keeps an
+Not supported yet: other regions (EU, JP, Asia; for Uncharted, see above) and the later updates of Unit 13 (1.01) and
+Shovel Knight (1.08, Treasure Trove). The launcher recognises them and tells you which release it supports. It keeps an
 unsupported update, and the game runs without it. Porting a new release starts with `dev/hookmap.py`, which carried
 43 of Killzone 1.12's 46 hooks over from 1.00 by matching code.
 
