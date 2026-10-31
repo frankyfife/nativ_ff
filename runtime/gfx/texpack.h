@@ -7,5 +7,5 @@ int texpack_on(void);                                         /* dumping or a pa
 int texpack_key(const GfxTexture *t, char key[40]);           /* 0: a texture packs leave alone (cube, strided, ...) */
 uint8_t *texpack_replacement(const char *key, int *w, int *h);   /* the pack's RGBA8 for it (free() it), or 0 */
 void texpack_dump(const GfxTexture *t, const char *key);      /* saved once (texdump/<key>.png) when dumping is on */
-uint8_t *texpack_filtered(const GfxTexture *t, const char *key);   /* a colour map with the contrast/sharpening filters, RGBA8 at its own size (free() it), or 0 */
+uint8_t *texpack_filtered(const GfxTexture *t, const char *key);   /* a colour map with the gamma/saturation/sharpening filters, RGBA8 at its own size (free() it), or 0 */
 #endif

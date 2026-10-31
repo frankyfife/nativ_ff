@@ -206,7 +206,7 @@ void overlay_process_event(const SDL_Event *event) {
  * next frame), then this copy is the live value and every edit saves at once. One setter per key, so
  * the page and the menu can't drift apart. The values with a live owner elsewhere (render scale,
  * aspect, fullscreen, the overlay level) are read from that owner every frame instead. */
-static struct { bool loaded; float fov, view, scen, chr, tcs, gyro_sens, vol; int fr, gyro, gyro_flat; } P;
+static struct { bool loaded; float fov, view, scen, chr, tcs, gyro_sens, vol, tgamma, tsat, tsharp; int fr, gyro, gyro_flat, debug; } P;
 static void prefs_load(void) {
 	if (P.loaded) return;
 	char b[16];
@@ -218,12 +218,15 @@ static void prefs_load(void) {
 	P.gyro = settings_int("gyro", 1); P.gyro_flat = !strcmp(settings_str("gyro_pose", "upright", b, sizeof b), "flat");
 	P.gyro_sens = (float)settings_float("gyro_sens", 1.0);
 	P.vol = (float)settings_float("volume", 1.0);
+	P.tgamma = (float)settings_float("texture_gamma", 1.0); P.tsat = (float)settings_float("texture_saturation", 1.0);
+	P.tsharp = (float)settings_float("texture_sharpen", 0.0); P.debug = settings_int("debug_menu", 0);
 	P.loaded = true;
 }
 static void set_fov(float v) { P.fov = v; settings_set_float("fov", v); settings_save(); }
 static void set_view(float v) { P.view = v; settings_set_float("view_distance", v); settings_save(); }
 static void set_scen(float v) { P.scen = v; settings_set_float("scenery_detail", v); settings_save(); }
 static void set_chr(float v) { P.chr = v; settings_set_float("character_detail", v); settings_save(); }
+static void set_float(float *p, const char *key, float v) { *p = v; settings_set_float(key, v); settings_save(); }   /* (texture filters: read at the next start) */
 /* the per-game options this game's hooks honour, from its conf (RECOMP_GAME_OPTIONS in RUN_ENV, e.g. "fov,view_distance"):
  * a row is shown only where it does something -- Uncharted's view distance and Killzone's scenery detail are different
  * hooks, and Shovel Knight has none */
@@ -378,6 +381,18 @@ static void page_game(void) {
 		ui::row("Scenery detail", "How far small scenery details stay visible. 1.00× is the game's own; walls and buildings keep the game's own detail switching.");
 		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##scen", &P.scen, 1.0f, 8.0f, "%.1f×")) set_scen(P.scen);
 	}
+	if (game_option("texture_filters")) {   /* (texpack.c: the colour maps, as each loads -- from the next start) */
+		ui::row("Texture gamma", "Brightens the dark and middle tones of the game's textures; the whites stay. 1.00 is the game's own. From the next start.");
+		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##tgamma", &P.tgamma, 0.7f, 1.6f, "%.2f")) set_float(&P.tgamma, "texture_gamma", P.tgamma);
+		ui::row("Texture saturation", "Stronger or weaker colours in the game's textures. 1.00 is the game's own. From the next start.");
+		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##tsat", &P.tsat, 0.5f, 1.6f, "%.2f")) set_float(&P.tsat, "texture_saturation", P.tsat);
+		ui::row("Texture sharpening", "Sharper detail in the game's textures. 0 is the game's own. From the next start.");
+		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##tsharp", &P.tsharp, 0.0f, 1.5f, "%.2f")) set_float(&P.tsharp, "texture_sharpen", P.tsharp);
+	}
+	if (game_option("debug_menu")) {
+		ui::row("Debug menu", "The developers' debug menu (the 1.03 update only). Experimental: with it on, the game can hang after a cutscene or a death. From the next start.");
+		{ bool on = P.debug != 0; if (ui::toggle("dbgm", &on)) { P.debug = on; settings_set_int("debug_menu", on); settings_save(); } }
+	}
 	if (game_option("character_detail")) {
 		ui::row("Character detail", "How far characters and props keep their full detail. 1.00× is the game's own.");
 		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##chr", &P.chr, 1.0f, 8.0f, "%.1f×")) set_chr(P.chr);
@@ -425,6 +440,15 @@ static void page_game(void) {
 	}
 	ui::row("Volume");
 	{ float pct = P.vol * 100.0f; ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##vol", &pct, 0.0f, 100.0f, "%.0f%%")) set_volume(pct / 100.0f); }
+	{	/* the sound settings (window.c audio_enhance): read by the output at every buffer, so a drag is heard at once */
+		static float bass = -100, treble, width; if (bass < -50) { bass = (float)settings_float("audio_bass", 3); treble = (float)settings_float("audio_treble", 6); width = (float)settings_float("audio_width", 1.2); }
+		ui::row("Bass", "A shelf at 120 Hz. 0 dB is the game's own sound; +3 dB the default.");
+		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##bass", &bass, -6.0f, 12.0f, "%+.1f dB")) { settings_set_float("audio_bass", bass); settings_save(); }
+		ui::row("Treble", "A shelf at 5 kHz: Vita games were mixed for the handheld's speakers. 0 dB is the game's own; +6 dB the default.");
+		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##treble", &treble, -6.0f, 12.0f, "%+.1f dB")) { settings_set_float("audio_treble", treble); settings_save(); }
+		ui::row("Stereo width", "1.00 is the game's own; 1.20 the default.");
+		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##width", &width, 0.5f, 2.0f, "%.2f")) { settings_set_float("audio_width", width); settings_save(); }
+	}
 	ui::rows_end();
 }
 extern "C" int camera_light(void); extern "C" void camera_light_set(int on);

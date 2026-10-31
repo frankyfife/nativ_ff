@@ -30,6 +30,7 @@
  */
 #include <SDL3/SDL.h>
 #include "gpulock.h"   /* every SDL submit/fence call below is the locked one: Homebrew SDL 3.4.16's Metal fence race, see that header */
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -492,6 +493,51 @@ static int av_auto_delay(int port) {
 	if (moved || av_applied[port] < 0 || target - (float)av_applied[port] > 5 || (float)av_applied[port] - target > 5) av_applied[port] = (int)(target + 0.5f);   /* else 5 ms hysteresis: each change is a small skip */
 	return av_applied[port];
 }
+/* ---- the sound settings, on every port after the game's own mix: "audio_bass" and "audio_treble" (dB, -6..12; 0 = the
+ * game's own, 3 and 6 the default) a low shelf at 120 Hz and a high shelf at 5 kHz (RBJ cookbook, slope 1), "audio_width" (0.5..2; 1 = the
+ * game's own, 1.2 the default) the side signal against the middle, then a soft knee from -1 dBFS so a boost rounds off instead of clipping.
+ * Vita mixes were made for the handheld's speakers: their music and ambience are thin above a few kHz on a big system
+ * (Uncharted's menu music: -32 dB at 6-12 kHz, the decoded data's own). Read live: a menu change is heard at once. */
+typedef struct { float b0, b1, b2, a1, a2; } Shelf;
+static Shelf shelf_of(int high, float f, float gain_db, float fs) {
+	float A = powf(10.0f, gain_db / 40.0f), w0 = 2.0f * (float)M_PI * f / fs, cw = cosf(w0), al = sinf(w0) / 2.0f * sqrtf(2.0f), sq = 2.0f * sqrtf(A) * al, s = high ? 1.0f : -1.0f;
+	float b0 = A * ((A + 1) + s * (A - 1) * cw + sq), b1 = -2 * s * A * ((A - 1) + s * (A + 1) * cw), b2 = A * ((A + 1) + s * (A - 1) * cw - sq);
+	float a0 = (A + 1) - s * (A - 1) * cw + sq, a1 = 2 * s * ((A - 1) - s * (A + 1) * cw), a2 = (A + 1) - s * (A - 1) * cw - sq;
+	Shelf q = {b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0}; return q;
+}
+static float sound_setting(const char *key, float def, float lo, float hi) { float v = (float)settings_float(key, def); return v < lo ? lo : v > hi ? hi : v; }
+static const void *audio_enhance(int port, const void *buf, uint32_t bytes) {
+	const float bass = sound_setting("audio_bass", 3, -6, 12), treble = sound_setting("audio_treble", 6, -6, 12), width = sound_setting("audio_width", 1.2f, 0.5f, 2);
+	if (fabsf(bass) < 0.05f && fabsf(treble) < 0.05f && fabsf(width - 1) < 0.01f) return buf;
+	static float last[8][3]; static Shelf lo[8], hi[8]; static float z[8][2][2][2];   /* per port: the settings its filters were made for, the filters, their delays (filter, channel) */
+	const uint32_t ch = achan[port] == 2 ? 2 : 1, frames = bytes / (2 * ch);
+	if (last[port][0] != bass || last[port][1] != treble || last[port][2] != width || !lo[port].b0) {
+		lo[port] = shelf_of(0, 120, bass, (float)afreq[port]); hi[port] = shelf_of(1, 5000, treble, (float)afreq[port]);
+		last[port][0] = bass; last[port][1] = treble; last[port][2] = width;
+	}
+	static __thread int16_t *out; static __thread uint32_t cap;
+	if (cap < bytes / 2) { int16_t *o = realloc(out, bytes); if (!o) return buf; out = o; cap = bytes / 2; }
+	const int16_t *in = (const int16_t *)buf;
+	for (uint32_t f = 0; f < frames; f++) {
+		float s[2];
+		for (uint32_t c = 0; c < ch; c++) {
+			float x = in[f * ch + c] / 32768.0f;
+			for (int k = 0; k < 2; k++) {   /* transposed direct form II: the low shelf, then the high one */
+				const Shelf *q = k ? &hi[port] : &lo[port]; float *d = z[port][k][c];
+				float y = q->b0 * x + d[0]; d[0] = q->b1 * x - q->a1 * y + d[1]; d[1] = q->b2 * x - q->a2 * y; x = y;
+			}
+			s[c] = x;
+		}
+		if (ch == 2) { float m = (s[0] + s[1]) * 0.5f, sd = (s[0] - s[1]) * 0.5f * width; s[0] = m + sd; s[1] = m - sd; }
+		for (uint32_t c = 0; c < ch; c++) {
+			float x = s[c], a = fabsf(x);
+			if (a > 0.89f) x = (x < 0 ? -1.0f : 1.0f) * (0.89f + 0.11f * tanhf((a - 0.89f) / 0.11f));   /* (the soft knee: -1 dBFS up, never past full scale) */
+			out[f * ch + c] = (int16_t)lrintf(x * 32767.0f);
+		}
+	}
+	for (int k = 0; k < 2; k++) for (uint32_t c = 0; c < 2; c++) for (int j = 0; j < 2; j++) if (fabsf(z[port][k][c][j]) < 1e-20f) z[port][k][c][j] = 0;   /* (no denormal tails) */
+	return out;
+}
 void audio_output(int dev, const void *buf, uint32_t bytes) {
 	if (dev < 1 || dev > nstreams) return;
 	SDL_AudioStream *s = streams[dev - 1];
@@ -542,7 +588,7 @@ void audio_output(int dev, const void *buf, uint32_t bytes) {
 		extra = (int)((uint64_t)dms * afreq[dev - 1] / 1000) * frame;
 		if (extra && q < extra) { static uint8_t zero[8192]; for (int pad = (extra - q) / frame * frame; pad > 0;) { int n = pad < (int)sizeof zero ? pad : (int)sizeof zero; SDL_PutAudioStreamData(s, zero, n); pad -= n; } }
 	}
-	SDL_PutAudioStreamData(s, buf, (int)bytes);
+	SDL_PutAudioStreamData(s, audio_enhance(dev - 1, buf, bytes), (int)bytes);
 	{	uint32_t ms = 0;
 		for (int i = 0; i < nstreams; i++) { int q = SDL_GetAudioStreamQueued(streams[i]); uint32_t bps = achan[i] * 2 * (afreq[i] / 1000); if (bps) ms += (uint32_t)q / bps; }
 		metrics_set_audio(ms, (uint32_t)nstreams, underruns);

@@ -962,7 +962,8 @@ static void ini_save(const Ini &x, const std::string &path, const char *header) 
 static const char *const SHARED_HEADER = "# Project Nativ's settings for every game (the launcher's Settings, and each game's menu; runtime/core/settings.h)";
 static const char *const GAME_HEADER = "# vitarecomp settings for this game: its own options, and where it differs from the shared settings (runtime/core/settings.h)";
 static bool game_key(const std::string &k) {   /* (settings.c's game_key: kept in the game's own file) */
-	for (const char *g : {"fov", "view_distance", "scenery_detail", "character_detail", "private_server", "net_redirect", "menu_hint_shown", "controller_layout"}) if (k == g) return true;
+	for (const char *g : {"fov", "view_distance", "scenery_detail", "character_detail", "private_server", "net_redirect", "menu_hint_shown", "controller_layout",
+	                      "texture_gamma", "texture_saturation", "texture_sharpen", "debug_menu"}) if (k == g) return true;
 	return false;
 }
 /* the shared keys' defaults where a game reads no value (runtime/core/settings.h; the consumers' own) */
@@ -970,7 +971,7 @@ static const char *setting_default(const std::string &k) {
 	static const std::pair<const char *, const char *> d[] = {{"render_scale", "1"}, {"fullscreen", "0"}, {"aspect_ratio", "native"}, {"hud_layout", "edges"},
 		{"aspect", "fit"}, {"frame_rate", "30"}, {"post_aa", "1"}, {"sharpen", "0.35"}, {"anisotropy", "16"}, {"shadow_filter", "1"}, {"full_res_world", "1"},
 		{"ssao", "1"}, {"ssao_strength", "1"}, {"osd", "0"}, {"input_mode", "auto"}, {"mouse_look", "1"}, {"raw_look", "1"}, {"mouse_sens", "1"},
-		{"mouse_invert", "0"}, {"shoulder_buttons", "triggers"}, {"touch_cursor_speed", "1"}, {"gyro", "1"}, {"gyro_pose", "upright"}, {"gyro_sens", "1"}, {"volume", "1"}, {"online_id", ""}, {"online", "1"},
+		{"mouse_invert", "0"}, {"shoulder_buttons", "triggers"}, {"touch_cursor_speed", "1"}, {"gyro", "1"}, {"gyro_pose", "upright"}, {"gyro_sens", "1"}, {"volume", "1"}, {"audio_bass", "3"}, {"audio_treble", "6"}, {"audio_width", "1.2"}, {"online_id", ""}, {"online", "1"},
 		{"camera", "light"}, {"save_dialog", "ask"}, {"audio_sync_trim_ms", "0"}, {"audio_buffers", "1"}};
 	for (auto &e : d) if (k == e.first) return e.second;
 	return nullptr;
@@ -991,6 +992,7 @@ static int recommended_scale(void) {
 static void recommended_into(Ini &x) {
 	ini_set(x, "fullscreen", "1"); ini_set(x, "render_scale", std::to_string(recommended_scale())); ini_set(x, "aspect_ratio", "window");
 	ini_set(x, "frame_rate", "60"); ini_set(x, "raw_look", "1"); ini_set(x, "shadow_filter", "2");
+	ini_set(x, "audio_bass", "3"); ini_set(x, "audio_treble", "6"); ini_set(x, "audio_width", "1.2");
 }
 /* once, when there is no shared file yet: it starts as what this library's games agree on (each key: the value most of
  * their files hold; a tie, the most recently changed file's), or the recommended set on a new install. Then, every
@@ -1157,7 +1159,12 @@ static void settings_modal(void) {
 			seg_row(t, "HUD", "With widescreen on: the HUD at the screen's edges, in a 16:9 frame in the middle, or stretched.", "hud_layout", "edges", {{"edges", "Edges"}, {"16:9", "16:9"}, {"stretch", "Stretched"}});
 			seg_row(t, "Picture fit", "How the picture fills the window.", "aspect", "fit", {{"fit", "Fit"}, {"stretch", "Stretch"}, {"fill", "Fill"}});
 			seg_row(t, "Frame rate", "60 is experimental: parts of a game timed in fixed 1/30 s steps can run fast.", "frame_rate", "30", {{"30", "30"}, {"60", "60"}});
-			toggle_row(t, "Anti-aliasing", "Smooths jagged edges (FXAA).", "post_aa", true);
+			{	/* (the in-game menu's choice: "fsr" and "post_aa" together; FSR only where a game's pack verified it, FXAA elsewhere) */
+				ui::row("Anti-aliasing", "Smooths jagged edges. FXAA: a light pass on the finished frame. FSR 3.1 (experimental): AMD's temporal anti-aliasing on the 3D world, steadier and cleaner, at a GPU cost -- in the games that support it (Uncharted, Killzone), FXAA in the others.");
+				static const char *const names[3] = {"Off##aal", "FXAA##aal", "FSR 3.1##aal"};
+				int v = atoi(tget(t, "fsr", "0").c_str()) ? 2 : atoi(tget(t, "post_aa", "1").c_str()) ? 1 : 0;
+				if (ui::segmented(names, 3, &v)) { target_write(t, "fsr", v == 2 ? "1" : "0"); target_write(t, "post_aa", v == 1 ? "1" : "0"); }
+			}
 			slider_row(t, "Sharpening", "Brings back detail lost to scaling and anti-aliasing.", "sharpen", 0.35, 0.0f, 100.0f, "%.0f%%", 100.0f);
 			seg_row(t, "Texture filtering", "Keeps textures crisp when seen at an angle.", "anisotropy", "16", {{"1", "Off"}, {"2", "2×"}, {"4", "4×"}, {"8", "8×"}, {"16", "16×"}});
 			seg_row(t, "Shadow edges", "How soft the edges of shadows are.", "shadow_filter", "1", {{"0", "Original"}, {"1", "Soft"}, {"2", "Softer"}});
@@ -1178,6 +1185,10 @@ static void settings_modal(void) {
 			slider_row(t, "Gyro sensitivity", nullptr, "gyro_sens", 1.0, 0.25f, 3.0f, "%.2f×");
 		} else {
 			slider_row(t, "Volume", nullptr, "volume", 1.0, 0.0f, 100.0f, "%.0f%%", 100.0f);
+			/* (window.c audio_enhance: after the game's own mix, heard at once) */
+			slider_row(t, "Bass", "Lifts or lowers the low end (a shelf at 120 Hz). 0 dB is the game's own sound; +3 dB the default.", "audio_bass", 3.0, -6.0f, 12.0f, "%+.1f dB");
+			slider_row(t, "Treble", "Lifts or lowers the highs (a shelf at 5 kHz): Vita games were mixed for the handheld's speakers and can sound dull on a big system. 0 dB is the game's own; +6 dB the default.", "audio_treble", 6.0, -6.0f, 12.0f, "%+.1f dB");
+			slider_row(t, "Stereo width", "Wider or narrower stereo. 1.00 is the game's own; 1.20 the default.", "audio_width", 1.2, 0.5f, 2.0f, "%.2f");
 			toggle_row(t, "Play online", ONLINE_EXPL, "online", true);
 			{ const std::string st = online_status_line(); if (!st.empty()) ui::muted_wrapped(st.c_str()); }
 			ui::row("Online name", "Others see ntv_ and your name, so players know you're on PC: up to 10 letters, digits, '-' or '_'.");
@@ -1194,7 +1205,7 @@ static void settings_modal(void) {
 	}
 	ImGui::EndChild();
 	if (ImGui::Button("Use the recommended set")) { Ini r; recommended_into(r); for (auto &e : r.kv) target_write(t, e.first, e.second); }
-	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fullscreen, %d× resolution, widescreen to the window, 60 fps, direct mouse aim, softer shadows", recommended_scale());
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fullscreen, %d× resolution, widescreen to the window, 60 fps, direct mouse aim, softer shadows, livelier sound (bass +3 dB, treble +6 dB, stereo width 1.2)", recommended_scale());
 	ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize("Done").x - ImGui::GetStyle().FramePadding.x * 2);
 	if (ui::primary_button("Done")) { g_settings_open = false; ImGui::CloseCurrentPopup(); }
 	ImGui::EndPopup();
@@ -1215,7 +1226,7 @@ static const char *setting_name(const std::string &k) {
 		{"hud_layout", "HUD"}, {"aspect", "Picture fit"}, {"frame_rate", "Frame rate"}, {"post_aa", "Anti-aliasing"}, {"sharpen", "Sharpening"},
 		{"anisotropy", "Texture filtering"}, {"shadow_filter", "Shadow edges"}, {"full_res_world", "Full-resolution world"}, {"ssao", "Ambient occlusion"},
 		{"ssao_strength", "Occlusion strength"}, {"osd", "On-screen stats"}, {"input_mode", "Play with"}, {"mouse_look", "Mouse look"}, {"raw_look", "Mouse aim"},
-		{"mouse_sens", "Mouse sensitivity"}, {"mouse_invert", "Invert vertical look"}, {"shoulder_buttons", "L and R buttons"}, {"volume", "Volume"}, {"online_id", "Online name"}, {"online", "Play online"}, {"gyro", "Gyro"},
+		{"mouse_sens", "Mouse sensitivity"}, {"mouse_invert", "Invert vertical look"}, {"shoulder_buttons", "L and R buttons"}, {"volume", "Volume"}, {"audio_bass", "Bass"}, {"audio_treble", "Treble"}, {"audio_width", "Stereo width"}, {"online_id", "Online name"}, {"online", "Play online"}, {"gyro", "Gyro"},
 		{"gyro_sens", "Gyro sensitivity"}, {"camera", "Rear camera"}};
 	for (auto &n : names) if (k == n.first) return n.second;
 	return nullptr;
@@ -1238,6 +1249,13 @@ static void game_settings_modal(void) {
 		if (game_option(*g, "fov")) { any = true; slider_row(t, "Field of view", "A wider view. 1.00× is the game's own.", "fov", 1.0, 0.75f, 1.5f, "%.2f×"); }
 		if (game_option(*g, "view_distance")) { any = true; slider_row(t, "View distance", "How far fading scenery reaches. 1.00× is the game's own.", "view_distance", 1.0, 1.0f, 3.0f, "%.2f×"); }
 		if (game_option(*g, "scenery_detail")) { any = true; slider_row(t, "Scenery detail", "How far small scenery details stay visible. 1.00× is the game's own.", "scenery_detail", 1.0, 1.0f, 8.0f, "%.1f×"); }
+		if (game_option(*g, "texture_filters")) {   /* (texpack.c: the colour maps, as each loads -- the next start) */
+			any = true;
+			slider_row(t, "Texture gamma", "Brightens the dark and middle tones of the game's textures; the whites stay. 1.00 is the game's own. Applies from the next start.", "texture_gamma", 1.0, 0.7f, 1.6f, "%.2f");
+			slider_row(t, "Texture saturation", "Stronger or weaker colours in the game's textures. 1.00 is the game's own. Applies from the next start.", "texture_saturation", 1.0, 0.5f, 1.6f, "%.2f");
+			slider_row(t, "Texture sharpening", "Sharper detail in the game's textures, before any scaling. 0 is the game's own. Applies from the next start.", "texture_sharpen", 0.0, 0.0f, 1.5f, "%.2f");
+		}
+		if (game_option(*g, "debug_menu")) { any = true; toggle_row(t, "Debug menu", "The developers' debug menu (the 1.03 update only). Experimental: with it on, the game can hang after a cutscene or a death. Applies from the next start.", "debug_menu", false); }
 		if (game_option(*g, "character_detail")) { any = true; slider_row(t, "Character detail", "How far characters and props keep their full detail. 1.00× is the game's own.", "character_detail", 1.0, 1.0f, 8.0f, "%.1f×"); }
 		if (game_option(*g, "private_server")) {   /* (a game whose online needs its makers' servers: Killzone; Unit 13 needs none) */
 			any = true;

@@ -429,7 +429,9 @@ void recomp_ihook_uc_rub_wait_floor(Cpu *c, int reg) {
 }
 /* Uncharted 1.03's debug menu (the community's rePatch "debug menu patch", 2022: one byte of the 1.03 main program,
  * movs r0, #1 -> #0 at 0x8110a2c8, the end of fn_8110a280): the same change without touching the program, when
- * "debug_menu" is set (settings.ini debug_menu = 1, or RECOMP_UC_DEBUG_MENU=1) */
+ * "debug_menu" is set (settings.ini debug_menu = 1, or RECOMP_UC_DEBUG_MENU=1). With it on the game hung after a cutscene
+ * and after a death (2026-10-31): the main thread waiting in sceGxmFinish (from the movie player's and the reload's
+ * teardown) for a completion that never came; off, the same places played through. Off by default for that. */
 void recomp_ihook_uc_debug_menu(Cpu *c, int reg) {
 	static int on = -1;
 	if (on < 0) { const char *e = getenv("RECOMP_UC_DEBUG_MENU"); on = e && *e ? atoi(e) != 0 : settings_int("debug_menu", 0) != 0; }
