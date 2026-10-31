@@ -90,7 +90,10 @@ inline bool toggle(const char *id, bool *on) {   /* Off / On as a segmented pair
 	*on = v != 0;
 	return true;
 }
-inline void heading(const char *s, float size) { ImGui::PushFont(nullptr, size); ImGui::TextUnformatted(s); ImGui::PopFont(); }
+/* a font size as drawn (em * k, from GetFontSize) pushed: PushFont takes the size before the style's scales, which it applies
+ * again -- at a DPI scale of 2 an em * 1.15 heading came out 2.3 em */
+inline void push_size(float drawn) { const ImGuiStyle &st = ImGui::GetStyle(); const float k = st.FontScaleMain * st.FontScaleDpi; ImGui::PushFont(nullptr, k > 0 ? drawn / k : drawn); }
+inline void heading(const char *s, float size) { push_size(size); ImGui::TextUnformatted(s); ImGui::PopFont(); }
 inline void muted_wrapped(const char *s) { ImGui::PushStyleColor(ImGuiCol_Text, muted); ImGui::TextWrapped("%s", s); ImGui::PopStyleColor(); }
 inline void dot(const ImVec4 &c) {   /* a status dot, centred on the text line */
 	ImVec2 p = ImGui::GetCursorScreenPos(); float h = ImGui::GetTextLineHeight(), r = h * 0.22f;
@@ -121,7 +124,7 @@ inline void row(const char *label, const char *explanation = nullptr) {
 	ImGui::TableNextRow(0, ImGui::GetFrameHeight() + ImGui::GetStyle().CellPadding.y * 2);
 	ImGui::TableNextColumn();
 	ImGui::TextUnformatted(label);
-	if (explanation && *explanation) { ImGui::PushFont(nullptr, ImGui::GetFontSize() * 0.88f); muted_wrapped(explanation); ImGui::PopFont(); }
+	if (explanation && *explanation) { push_size(ImGui::GetFontSize() * 0.88f); muted_wrapped(explanation); ImGui::PopFont(); }
 	ImGui::TableNextColumn();
 }
 inline void rows_end(void) { ImGui::EndTable(); }

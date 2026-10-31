@@ -849,7 +849,7 @@ static void found_list(void) {
 		} else if (x.pick && x.kind == "update" && x.licence == "no" && !found_ready(x)) {
 			ui::dot(ui::warn); ImGui::TextDisabled("Add its game too: an update decrypts with its game's licence");
 		}
-		ImGui::PushFont(nullptr, em * 0.85f); ImGui::PushStyleColor(ImGuiCol_Text, ui::muted);
+		ui::push_size(em * 0.85f); ImGui::PushStyleColor(ImGuiCol_Text, ui::muted);
 		ImGui::TextUnformatted(x.path.c_str());
 		if (!kept_licence(x.content_id).empty() && (x.kind == "game" || x.kind == "update")) ImGui::TextUnformatted("Licence: kept");
 		else if (x.licence == "file") ImGui::Text("Licence: %s", x.licence_file.c_str());
@@ -1522,9 +1522,16 @@ static void game_card(const Game &g, float w, float name_h) {
 	}
 	else {   /* no art in this copy: a quiet panel with the title set large */
 		dl->AddRectFilledMultiColor(p, ImVec2(p.x + w, p.y + img_h), ui::u32(ui::card_hi), ui::u32(ui::card_hi), ui::u32(ui::surface), ui::u32(ui::surface));
-		ImGui::PushFont(nullptr, em * 1.9f);
-		float wrap = w - em * 3;
+		float wrap = w - em * 3, big = em * 1.9f;
+		{	/* smaller when its longest word, or the whole title, wouldn't fit the panel (a word can't wrap: "Mercenary" ran past the card) */
+			float word = 0; const char *s = g.name.c_str();
+			while (*s) { const char *e = s; while (*e && *e != ' ') e++; float x = ImGui::CalcTextSize(s, e).x * 1.9f; if (x > word) word = x; s = *e ? e + 1 : e; }
+			if (word > wrap) big *= wrap / word;
+			if (big < em) big = em;
+		}
+		ui::push_size(big);
 		ImVec2 ts = ImGui::CalcTextSize(g.name.c_str(), nullptr, false, wrap);
+		if (ts.y > img_h - em) { ImGui::PopFont(); big *= (img_h - em) / ts.y; ui::push_size(big); ts = ImGui::CalcTextSize(g.name.c_str(), nullptr, false, wrap); }   /* (three lines too tall for the panel) */
 		dl->AddText(nullptr, 0, ImVec2(p.x + (w - ts.x) * 0.5f, p.y + (img_h - ts.y) * 0.5f), ui::u32(ui::muted, 0.75f), g.name.c_str(), nullptr, wrap);
 		ImGui::PopFont();
 	}
@@ -1538,7 +1545,7 @@ static void game_card(const Game &g, float w, float name_h) {
 	float y0 = ImGui::GetCursorPosY();
 	ImGui::SetCursorPosX(pad);
 	ImGui::PushTextWrapPos(w - pad);
-	ImGui::PushFont(nullptr, em * 1.15f); ImGui::TextWrapped("%s", g.name.c_str()); ImGui::PopFont();
+	ui::push_size(em * 1.15f); ImGui::TextWrapped("%s", g.name.c_str()); ImGui::PopFont();
 	ImGui::SetCursorPosY(y0 + name_h + ImGui::GetStyle().ItemSpacing.y);
 	ImGui::SetCursorPosX(pad);
 	if (mine) { ui::spinner(ui::accent); ImGui::TextDisabled("%s", task_status().c_str()); }
@@ -1639,7 +1646,7 @@ static void hub_ui(SDL_Window *win) {
 	const float bar_h = ImGui::GetFrameHeightWithSpacing() + em * 0.8f, drawer_h = g_drawer ? ImGui::GetContentRegionAvail().y * 0.4f : 0;
 	ImGui::BeginChild("library", ImVec2(0, ImGui::GetContentRegionAvail().y - bar_h - drawer_h), 0);
 	int nimp = 0; for (const Game &g : g_games) nimp += g.imported;
-	ImGui::PushFont(nullptr, em * 1.15f); ImGui::TextUnformatted("Library"); ImGui::PopFont();
+	ui::push_size(em * 1.15f); ImGui::TextUnformatted("Library"); ImGui::PopFont();
 	ImGui::SameLine(); ImGui::TextDisabled("%d of %zu added", nimp, g_games.size());
 	if (!g_firmware) {
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(ui::warn.x, ui::warn.y, ui::warn.z, 0.10f));
@@ -1679,7 +1686,7 @@ static void hub_ui(SDL_Window *win) {
 	int cols = (int)((avail + gap) / (min_w + gap)); if (cols < 1) cols = 1;
 	float cw = (avail - gap * (cols - 1)) / cols; if (cw > em * 24) cw = em * 24;   /* (a wide window gets more columns, not giant cards) */
 	float name_h = 0;   /* the longest name's height at this width: every card's text block lines up */
-	ImGui::PushFont(nullptr, em * 1.15f);
+	ui::push_size(em * 1.15f);
 	for (const Game &g : g_games) { float hh = ImGui::CalcTextSize(g.name.c_str(), nullptr, false, cw - em * 1.8f).y; if (hh > name_h) name_h = hh; }
 	ImGui::PopFont();
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
@@ -1911,9 +1918,9 @@ int main(int, char **) {
 		const SDL_DisplayID disp = SDL_GetPrimaryDisplay(); const SDL_DisplayMode *mode = SDL_GetDesktopDisplayMode(disp);
 		const float sys = SDL_GetDisplayContentScale(disp), by_h = mode ? (float)mode->h / 900.0f : 1.0f;
 		scale = sys > by_h ? sys : by_h;
-		if (const char *e = getenv("ATIV_UI_SCALE")) if (atof(e) > 0) scale = (float)atof(e);
-		if (scale < 1) scale = 1;
 	}
+	if (const char *e = getenv("ATIV_UI_SCALE")) if (atof(e) > 0) scale = (float)atof(e);   /* (a screenshot's too: how a big display lays out) */
+	if (scale < 1) scale = 1;
 	SDL_Window *win = shot_path ? SDL_CreateWindow("Project Nativ", sw, sh, SDL_WINDOW_HIDDEN)
 	                            : SDL_CreateWindow("Project Nativ", (int)(1180 * scale), (int)(760 * scale), SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 	g_gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB, false, nullptr);

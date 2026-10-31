@@ -358,7 +358,7 @@ static void page_performance(void) {
 	ui::row("On-screen stats", "Frame rate and timings drawn over the game. F1 cycles them.");
 	{ static const char *const names[3] = {"Off##osd", "FPS##osd", "Full##osd"}; int lvl = metrics_osd_level(); if (ui::segmented(names, 3, &lvl)) set_osd(lvl); }
 	ui::row("Frame rate now");
-	{ char b[32]; std::snprintf(b, sizeof b, "%.0f fps", metrics_fps()); ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.6f); ImGui::TextUnformatted(b); ImGui::PopFont(); }
+	{ char b[32]; std::snprintf(b, sizeof b, "%.0f fps", metrics_fps()); ui::push_size(ImGui::GetFontSize() * 1.6f); ImGui::TextUnformatted(b); ImGui::PopFont(); }
 	ui::rows_end();
 }
 static void page_game(void) {
@@ -387,7 +387,7 @@ static void page_game(void) {
 		static const char *const names[2] = {"Touch screen##cl", "PS TV buttons##cl"};
 		int v = settings_int("controller_layout", 1) == 2;   /* (the setting's values: 1 touch, 2 buttons) */
 		if (ui::segmented(names, 2, &v)) { settings_set_int("controller_layout", v ? 2 : 1); settings_save(); }
-		ImGui::SameLine(); ImGui::PushFont(nullptr, ImGui::GetFontSize() * 0.85f); ImGui::AlignTextToFramePadding(); ui::muted_wrapped("Controller only"); ImGui::PopFont();
+		ImGui::SameLine(); ui::push_size(ImGui::GetFontSize() * 0.85f); ImGui::AlignTextToFramePadding(); ui::muted_wrapped("Controller only"); ImGui::PopFont();
 	}
 	if (game_option("online")) {
 		ui::row("Play online", "The game's online modes with other Project Nativ players, on your network and over the internet. They see your online name and your computer's IP address, as in any peer-to-peer game. Applies the next time the game starts.");
