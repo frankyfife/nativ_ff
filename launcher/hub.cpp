@@ -1904,7 +1904,16 @@ int main(int, char **) {
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
 	int sw = 1280, sh = 800;
 	if (const char *s = getenv("ATIV_SHOT_SIZE")) sscanf(s, "%dx%d", &sw, &sh);
-	const float scale = shot_path ? 1.0f : SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+	/* the system's scale, but at least the display's height over 900 (2.4 on a 4K TV left at 100%: readable from the couch);
+	 * ATIV_UI_SCALE=<factor> fixes it */
+	float scale = 1.0f;
+	if (!shot_path) {
+		const SDL_DisplayID disp = SDL_GetPrimaryDisplay(); const SDL_DisplayMode *mode = SDL_GetDesktopDisplayMode(disp);
+		const float sys = SDL_GetDisplayContentScale(disp), by_h = mode ? (float)mode->h / 900.0f : 1.0f;
+		scale = sys > by_h ? sys : by_h;
+		if (const char *e = getenv("ATIV_UI_SCALE")) if (atof(e) > 0) scale = (float)atof(e);
+		if (scale < 1) scale = 1;
+	}
 	SDL_Window *win = shot_path ? SDL_CreateWindow("Project Nativ", sw, sh, SDL_WINDOW_HIDDEN)
 	                            : SDL_CreateWindow("Project Nativ", (int)(1180 * scale), (int)(760 * scale), SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 	g_gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB, false, nullptr);

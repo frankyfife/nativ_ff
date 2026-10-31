@@ -114,6 +114,20 @@ static std::atomic<bool> g_prep_card;             /* the shader prep card is up 
 static int g_prep_demo[3] = {-1, 0, 0};           /* RECOMP_OVERLAY_DUMP_UI=prep: the card with these numbers (done, total, seconds left) */
 static void build_prep(void); static void build_prep_corner(float w, float hgt, int done, int total);
 static std::atomic<bool> g_quit_card;             /* the quit card is (overlay_quit_confirm) */
+/* the overlay's size: the window's height over 720 points (1x at 720p, 1.5x at 1080p, 3x at 4K -- a TV seen from the couch),
+ * never under 1; RECOMP_UI_SCALE=<factor> fixes it. Applied again only when it changes (fullscreen, a resize) */
+static float g_ui_scale;
+static void ui_scale_update(float h) {
+	static float fixed = -1;
+	if (fixed < 0) { const char *e = getenv("RECOMP_UI_SCALE"); fixed = e && *e ? (float)atof(e) : 0; if (!(fixed > 0)) fixed = 0; }
+	float s = fixed > 0 ? fixed : h / 720.0f;
+	s = s < 1 ? 1 : s > 6 ? 6 : s;
+	if (fabsf(s - g_ui_scale) < 0.02f) return;
+	g_ui_scale = s; ui::apply(15.0f, s);
+}
+/* the bitmap-font extras (toasts, the frame-rate overlay, the pause banner) doubled for crispness on a big window: not again
+ * once the overlay's own scale has made them big */
+static float bitmap_k(void) { return g_ui_scale >= 1.5f ? 1.0f : 2.0f; }
 
 int overlay_init(SDL_GPUDevice *device, SDL_Window *window, SDL_GPUTextureFormat color_fmt) {
 	if (!device) return 0;
@@ -802,7 +816,7 @@ static int toast_tokens(const char *body, ImFont *font, float fs, float cap_pad,
 }
 static void build_toasts(float w, float hgt, double t) {
 	(void)hgt;
-	ImFont *font = ImGui::GetFont(); const float fs = ImGui::GetFontSize() * (w >= 1000 ? 2.0f : 1.0f);   /* (the bitmap font: integer multiples stay crisp) */
+	ImFont *font = ImGui::GetFont(); const float fs = ImGui::GetFontSize() * (w >= 1000 ? bitmap_k() : 1.0f);   /* (the bitmap font: integer multiples stay crisp) */
 	const float pad = fs * 0.75f, edge = fs * 0.3f, cap_pad = fs * 0.3f, space = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, " ").x, lh = fs * 1.35f;
 	const float maxw = fmaxf(w / 3.0f, fs * 18.0f);
 	float y = fs * 0.75f + g_bar_h * g_bar_vis;
@@ -842,7 +856,7 @@ static void build_toasts(float w, float hgt, double t) {
 }
 /* Game > Pause (not the menu): the picture stays, with this over it */
 static void build_pause_banner(float w, float hgt) {
-	ImFont *font = ImGui::GetFont(); const float fs = ImGui::GetFontSize() * 2.0f;
+	ImFont *font = ImGui::GetFont(); const float fs = ImGui::GetFontSize() * bitmap_k();
 	static const char l1[] = "PAUSED", l2[] = "Game > Resume in the menu bar (mouse to the top), or F10";
 	const ImVec2 s1 = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, l1), s2 = font->CalcTextSizeA(fs * 0.5f, FLT_MAX, 0.0f, l2);
 	const float pad = 12, bw = fmaxf(s1.x, s2.x) + 2 * pad, bh = s1.y + s2.y + 3 * pad;
@@ -861,7 +875,7 @@ int overlay_draws_hud(void) { return g_ctx && g_has_window; }
 static void build_marks(void) {
 	ImDrawList *dl = g_intro ? ImGui::GetForegroundDrawList() : ImGui::GetBackgroundDrawList();   /* over the game's frame (LOAD), under the bar and its menus; over the touch card */
 	if (g_nosd) {   /* the overlay: a translucent dark panel at the top-left corner with the lines, as the bitmap version drew it (metrics.c); below the bar while that's down */
-		ImFont *font = ImGui::GetFont(); float fs = ImGui::GetFontSize() * 2.0f;   /* the embedded bitmap font at an integer multiple: crisp */
+		ImFont *font = ImGui::GetFont(); float fs = ImGui::GetFontSize() * bitmap_k();   /* the embedded bitmap font at an integer multiple: crisp */
 		const float x = 8, y = 8 + g_bar_h * g_bar_vis, pad = 6, lh = fs + 2; float wmax = 0;
 		for (int i = 0; i < g_nosd; i++) { ImVec2 sz = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, g_osd[i]); if (sz.x > wmax) wmax = sz.x; }
 		dl->AddRectFilled(ImVec2(x, y), ImVec2(x + wmax + 2 * pad, y + g_nosd * lh + 2 * pad), IM_COL32(0, 0, 0, 170));
@@ -871,10 +885,10 @@ static void build_marks(void) {
 	for (int i = 0; i < g_nmarks; i++) {
 		const OverlayMark &m = g_marks[i];
 		ImU32 col = m.rear ? IM_COL32(255, 170, 60, 230) : IM_COL32(80, 200, 255, 230);   /* rear orange, front blue */
-		float r = m.cursor ? 14.f : 10.f;
+		const float k = g_ui_scale > 1 ? g_ui_scale : 1, r = (m.cursor ? 14.f : 10.f) * k;   /* (with the overlay's scale: seen on a TV) */
 		if (m.pressed) dl->AddCircleFilled(ImVec2(m.x, m.y), r, (col & 0x00ffffff) | IM_COL32(0, 0, 0, 120));
-		dl->AddCircle(ImVec2(m.x, m.y), r, col, 0, 2.5f);
-		if (m.cursor) { dl->AddLine(ImVec2(m.x - r - 4, m.y), ImVec2(m.x + r + 4, m.y), col, 1.5f); dl->AddLine(ImVec2(m.x, m.y - r - 4), ImVec2(m.x, m.y + r + 4), col, 1.5f); }
+		dl->AddCircle(ImVec2(m.x, m.y), r, col, 0, 2.5f * k);
+		if (m.cursor) { dl->AddLine(ImVec2(m.x - r - 4 * k, m.y), ImVec2(m.x + r + 4 * k, m.y), col, 1.5f * k); dl->AddLine(ImVec2(m.x, m.y - r - 4 * k), ImVec2(m.x, m.y + r + 4 * k), col, 1.5f * k); }
 	}
 }
 /* the save-data dialog (apputil.c through savedlg.h): the game's save / load / delete list, a yes/no question,
@@ -904,9 +918,9 @@ static void build_save_dialog(float w, float hgt) {
 	if (!g_sd_armed && !keys_down(K_OK) && !keys_down(K_BACK)) g_sd_armed = true;
 	const bool ok = g_sd_armed && keys_pressed(K_OK), back = g_sd_armed && keys_pressed(K_BACK);
 	int answer = 0; bool answered = false, moved = false;
-	const float s = w >= 1400 ? 2.0f : 1.0f;   /* (the bitmap font: integer multiples stay crisp) */
+	const float s = w >= 1400 && g_ui_scale < 1.5f ? 2.0f : 1.0f;   /* (the bitmap font: integer multiples stay crisp; the overlay's own scale makes it big already) */
 	ImGui::SetNextWindowPos(ImVec2(w * 0.5f, hgt * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-	ImGui::SetNextWindowSize(ImVec2(fminf(w - 32, 520 * s), 0), ImGuiCond_Always);   /* (height 0: fitted every frame) */
+	ImGui::SetNextWindowSize(ImVec2(fminf(w - 32, 520 * s * g_ui_scale), 0), ImGuiCond_Always);   /* (height 0: fitted every frame) */
 	ImGui::SetNextWindowBgAlpha(0.95f);
 	ImGui::Begin("##savedlg", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
 	ImGui::SetWindowFontScale(s);
@@ -1057,6 +1071,7 @@ static void render_frame(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target, uint
 		io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 		io.DeltaTime = dt_s > 0 ? (float)dt_s : 1.0f / 60.0f;
 	}
+	ui_scale_update(io.DisplaySize.y);
 	ImGui::NewFrame();
 	g_mouse_captured = io.WantCaptureMouse;   /* (computed by NewFrame from where the pointer was: the bar, a menu, the tab) */
 	build();

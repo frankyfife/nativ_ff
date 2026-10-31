@@ -24,6 +24,7 @@ inline ImU32 u32(const ImVec4 &c, float a = 1) { return ImGui::GetColorU32(with_
 /* the style: sizes in points at font_size, scaled by the display's content scale */
 inline void apply(float font_size, float scale) {
 	ImGuiStyle &st = ImGui::GetStyle();
+	st = ImGuiStyle();   /* (from the defaults: the overlay applies it again whenever its scale changes, and ScaleAllSizes compounds) */
 	ImGui::StyleColorsDark();
 	st.FontSizeBase = font_size; st.FontScaleDpi = scale;
 	const float k = font_size / 16.0f;
