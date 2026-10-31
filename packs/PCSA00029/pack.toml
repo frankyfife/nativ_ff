@@ -40,10 +40,13 @@ GAME_ADDRS = "uc_fov_call0=0x810412e2 uc_fov_call1=0x810b4456 uc_fov_call2=0x811
 # slot 3 through their RTTI (N6BSGame22cBalanceMoveControllerE, N6BSGame18cMudLugeControllerE); cPVSTable's ctor/dtors and
 # vtable likewise; the rest by aligned code, same registers and offsets -- except the PVS record at uc_pvs_union's store, r5
 # here (r4 in 1.00), which the hook now takes from the store's own register.
+# Its patch.bin also rebuilt both shader bundles with a newer compiler (none of the 2x429 programs is 1.00's byte for byte):
+# 7 fell back to the software path (render-target downloads, ~85 ms a frame) and skinned attachments drew off the body.
+# dev/uc_shaders103.py puts 1.00's bundles in a copy of patch.bin -- the same programs, in the same order, under the same names.
 [versions."1.03"]
 sha256 = "661457de5a4192fad214fba8d9a3e627faeeed671502eacf0f702f00268ad33b"
 status = "supported"
 HOOKS = "0x8168c850:uc_proj 0x811ea532:uc_gesture_end 0x811ea688:uc_gesture_update 0x812273de:uc_items_reset 0x811477d4:uc_balance_tick 0x811cbe66:uc_slide_tick 0x81237c30:uc_pvs_new 0x81237d7e:uc_pvs_free 0x81237e9a:uc_pvs_free"
-IHOOKS = "0x8126aab6:frame_dt 0x81272100:frame_dt 0x81274258:frame_dt 0x8114618e:uc_path_end 0x8124b802:uc_mouse_look 0x810623fc:uc_look_velocity 0x8103f118:uc_aspect 0x8103f140:uc_aspect 0x8104062e:uc_aspect 0x81056122:uc_aspect 0x813cca8e:uc_aspect 0x813cd7f4:uc_aspect 0x810b1c20:uc_aspect 0x8114de24:uc_aspect 0x81217f16:uc_aspect 0x8124edc4:uc_shape_threshold 0x8124edd2:uc_shape_score 0x81133da4:uc_rub_wait_floor 0x8113454a:frames30 0x810358f4:frames30 0x81037a64:frames30 0x815d98a8:frame_dt 0x812384c0:uc_pvs_union 0x8103f174:uc_fov_copy 0x81225614:uc_item_pools 0x8132812a:uc_zone_done"
+IHOOKS = "0x8126aab6:frame_dt 0x81272100:frame_dt 0x81274258:frame_dt 0x8114618e:uc_path_end 0x8124b802:uc_mouse_look 0x810623fc:uc_look_velocity 0x8103f118:uc_aspect 0x8103f140:uc_aspect 0x8104062e:uc_aspect 0x81056122:uc_aspect 0x813cca8e:uc_aspect 0x813cd7f4:uc_aspect 0x810b1c20:uc_aspect 0x8114de24:uc_aspect 0x81217f16:uc_aspect 0x8124edc4:uc_shape_threshold 0x8124edd2:uc_shape_score 0x81133da4:uc_rub_wait_floor 0x8113454a:frames30 0x810358f4:frames30 0x81037a64:frames30 0x815d98a8:frame_dt 0x812384c0:uc_pvs_union 0x8103f174:uc_fov_copy 0x81225614:uc_item_pools 0x8132812a:uc_zone_done 0x8110a2c8:uc_debug_menu"   # uc_debug_menu: the rePatch debug menu, off unless debug_menu = 1 (hooks.c)
 GAME_ADDRS = "uc_fov_call0=0x8103f1b2 uc_fov_call1=0x810b1c50 uc_fov_call2=0x8114de5c uc_fov_call3=0x813ccb46 uc_fov_call4=0x813cd820 uc_pvs_vtable=0x818b0770 uc_static_world=0x81238244"
 FUNCTION_SEEDS = "0x8126c276:thumb 0x8900264c:arm"   # 0x8126c276: 1.00's seed 0x8128ace2 here (the analysis misses it; a run called it); 0x8900264c is in the firmware's libgxm, as in 1.00

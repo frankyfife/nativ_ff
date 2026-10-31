@@ -427,6 +427,14 @@ void recomp_ihook_uc_path_end(Cpu *c, int reg) {
 void recomp_ihook_uc_rub_wait_floor(Cpu *c, int reg) {
 	if (reg >= 0 && reg <= 14 && (int32_t)c->r[reg] < 0) c->r[reg] = 0;
 }
+/* Uncharted 1.03's debug menu (the community's rePatch "debug menu patch", 2022: one byte of the 1.03 main program,
+ * movs r0, #1 -> #0 at 0x8110a2c8, the end of fn_8110a280): the same change without touching the program, when
+ * "debug_menu" is set (settings.ini debug_menu = 1, or RECOMP_UC_DEBUG_MENU=1) */
+void recomp_ihook_uc_debug_menu(Cpu *c, int reg) {
+	static int on = -1;
+	if (on < 0) { const char *e = getenv("RECOMP_UC_DEBUG_MENU"); on = e && *e ? atoi(e) != 0 : settings_int("debug_menu", 0) != 0; }
+	if (on && reg >= 0 && reg <= 14 && c->r[reg] == 1) c->r[reg] = 0;
+}
 /* Uncharted (PCSA00029) at 60 fps: of its 43 sites building 1/30 s, three ran once per presented frame at
  * both rates in live play (RECOMP_WATCH_COUNT over 600 frames of walking, our test save, 2026-10-10) and get
  * the frame's real time by the same hook -- fn_8128924a (0x81289498, ~90 calls a frame: an object's velocity
