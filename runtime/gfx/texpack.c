@@ -15,6 +15,12 @@
  *   texpack/   the replacements, at any depth; read once at start. RECOMP_TEX_REPLACE=0: ignored
  * A replacement's mip chain is made on the GPU from it; its proportions should match the original's (4x: 512x512 ->
  * 2048x2048). Cube maps, strided-linear and float formats are left alone.
+ *
+ * Filters, for a game's own textures with no replacement: texture_contrast / texture_sharpen in settings.ini (or
+ * RECOMP_TEX_CONTRAST / RECOMP_TEX_SHARPEN; 0 = off, 0.15 / 0.5 a light touch) raise the contrast of the colour maps
+ * around each one's own mean (its brightness stays) and sharpen them with an unsharp mask. Which textures are colour maps
+ * comes from texnames.csv in the run folder (dev/texnames.py --list: key,path) -- the names ending in _c, outside
+ * game/ui/; normal maps, masks and the HUD are left as they are.
  */
 #include <dirent.h>
 #include <pthread.h>
@@ -35,7 +41,9 @@
 #define DUMP_DIR "texdump"
 #define PACK_DIR "texpack"
 
-static int g_dump = -1, g_replace = -1;
+static int g_dump = -1, g_replace = -1, g_filter;
+static float g_contrast, g_sharpen;
+static char (*g_colour)[40]; static int g_ncolour;   /* the colour maps' keys (sorted), from texnames.csv */
 typedef struct { char key[40]; char *path; } PackFile;
 static PackFile *g_pack; static int g_npack;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -70,6 +78,21 @@ static void scan(const char *dir, int depth) {
 	}
 	closedir(d);
 }
+static int str_cmp(const void *a, const void *b) { return strcmp((const char *)a, (const char *)b); }
+static void load_names(void) {   /* texnames.csv: key,path -- the colour maps' keys */
+	FILE *f = fopen("texnames.csv", "rb"); if (!f) return;
+	char line[1024]; int cap = 0;
+	while (fgets(line, sizeof line, f)) {
+		char *comma = strchr(line, ','); if (!comma || comma - line >= 40) continue;
+		*comma = 0; char *path = comma + 1; size_t n = strlen(path);
+		while (n && (path[n - 1] == '\n' || path[n - 1] == '\r')) path[--n] = 0;
+		if (n < 8 || strcmp(path + n - 8, "_c.bstex") != 0 || strncmp(path, "game/ui/", 8) == 0) continue;
+		if (g_ncolour == cap) { int nc = cap ? 2 * cap : 1024; char (*c)[40] = realloc(g_colour, (size_t)nc * sizeof *g_colour); if (!c) break; g_colour = c; cap = nc; }
+		snprintf(g_colour[g_ncolour++], 40, "%s", line);
+	}
+	fclose(f);
+	if (g_ncolour) qsort(g_colour, (size_t)g_ncolour, sizeof *g_colour, str_cmp);
+}
 static void init(void) {
 	if (g_dump >= 0) return;
 	const char *e = getenv("RECOMP_TEX_DUMP");
@@ -83,8 +106,16 @@ static void init(void) {
 		if (g_npack) fprintf(stderr, "texture pack: %d replacement%s in %s/\n", g_npack, g_npack == 1 ? "" : "s", PACK_DIR);
 	}
 	if (g_dump) { mkdir(DUMP_DIR, 0755); fprintf(stderr, "texture dump: new textures saved to %s/\n", DUMP_DIR); }
+	e = getenv("RECOMP_TEX_CONTRAST"); g_contrast = e && *e ? (float)atof(e) : settings_float("texture_contrast", 0.0f);
+	e = getenv("RECOMP_TEX_SHARPEN"); g_sharpen = e && *e ? (float)atof(e) : settings_float("texture_sharpen", 0.0f);
+	if (g_contrast < 0 || g_contrast > 1) g_contrast = 0;
+	if (g_sharpen < 0 || g_sharpen > 2) g_sharpen = 0;
+	if (g_contrast > 0 || g_sharpen > 0) load_names();
+	g_filter = g_ncolour > 0 && (g_contrast > 0 || g_sharpen > 0);
+	if (g_filter) fprintf(stderr, "texture filters: contrast +%.0f%%, sharpening %.2f on %d colour maps\n", g_contrast * 100, g_sharpen, g_ncolour);
+	else if (g_contrast > 0 || g_sharpen > 0) fprintf(stderr, "texture filters: no texnames.csv beside the game (dev/texnames.py --list): off\n");
 }
-int texpack_on(void) { init(); return g_dump || g_replace; }
+int texpack_on(void) { init(); return g_dump || g_replace || g_filter; }
 
 /* the key, from level 0's bytes: 0 for a texture this leaves alone */
 int texpack_key(const GfxTexture *t, char key[40]) {
@@ -155,4 +186,35 @@ void texpack_dump(const GfxTexture *t, const char *key) {
 	gfx_decode_texture_rgba8(&l0, rgba);
 	snprintf(j->key, sizeof j->key, "%s", key); j->w = t->width; j->h = t->height; j->rgba = rgba;
 	pthread_mutex_lock(&g_mu); j->next = g_q; g_q = j; pthread_cond_signal(&g_cv); pthread_mutex_unlock(&g_mu);
+}
+
+/* ---- filters: a colour map's level 0, decoded, with more contrast around its mean and an unsharp mask (3x3, wrapping:
+ * the textures tile) */
+uint8_t *texpack_filtered(const GfxTexture *t, const char *key) {
+	init();
+	if (!g_filter || !bsearch(key, g_colour, (size_t)g_ncolour, sizeof *g_colour, str_cmp)) return 0;
+	const int w = t->width, h = t->height; const size_t n = (size_t)w * h;
+	uint8_t *px = malloc(n * 4); float *v = malloc(n * 3 * sizeof *v);
+	if (!px || !v) { free(px); free(v); return 0; }
+	GfxTexture l0; gfx_texture_level(t, 0, &l0);
+	gfx_decode_texture_rgba8(&l0, px);
+	double sum[3] = {0, 0, 0};
+	for (size_t i = 0; i < n; i++) for (int k = 0; k < 3; k++) sum[k] += px[4 * i + k];
+	const float c = 1.0f + g_contrast;
+	for (size_t i = 0; i < n; i++) for (int k = 0; k < 3; k++) { float m = (float)(sum[k] / n); v[3 * i + k] = m + (px[4 * i + k] - m) * c; }
+	for (int y = 0; y < h; y++) {
+		const int ym = (y + h - 1) % h, yp = (y + 1) % h;
+		for (int x = 0; x < w; x++) {
+			const int xm = (x + w - 1) % w, xp = (x + 1) % w;
+			for (int k = 0; k < 3; k++) {
+				#define V(xx, yy) v[3 * ((size_t)(yy) * w + (xx)) + k]
+				float blur = (V(xm, ym) + 2 * V(x, ym) + V(xp, ym) + 2 * V(xm, y) + 4 * V(x, y) + 2 * V(xp, y) + V(xm, yp) + 2 * V(x, yp) + V(xp, yp)) / 16.0f;
+				float o = V(x, y) + g_sharpen * (V(x, y) - blur);
+				#undef V
+				px[4 * ((size_t)y * w + x) + k] = (uint8_t)(o < 0 ? 0 : o > 255 ? 255 : o + 0.5f);
+			}
+		}
+	}
+	free(v);
+	return px;
 }

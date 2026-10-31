@@ -61,7 +61,7 @@ def textures(path):
                 if n is None or n > dsize:
                     continue
                 crc = zlib.crc32(gxt[doff:doff + n]) & 0xffffffff
-                yield f"{crc:08x}_{w}x{h}_{fmt & ~0xfff:08x}", name
+                yield f"{crc:08x}_{w}x{h}_{fmt & 0x9f007000:08x}", name   # (the format proper, as runtime/gfx/texpack.c keys it)
 
 
 def main(argv):

@@ -1317,6 +1317,7 @@ static void upload_texture(TexEntry *e, const GfxTexture *t) {
 			int rw, rh; uint8_t *px = texpack_replacement(key, &rw, &rh);
 			if (px) { int ok = upload_replacement(e, px, rw, rh); free(px); if (ok) return; }
 			if (!e->dumped) { e->dumped = 1; texpack_dump(t, key); }
+			if ((px = texpack_filtered(t, key))) { int ok = upload_replacement(e, px, t->width, t->height); free(px); if (ok) return; }   /* (the contrast/sharpening filters: a colour map, at its own size) */
 		}
 		if (e->repl) { if (e->tex) SDL_ReleaseGPUTexture(gpu(), e->tex); e->tex = 0; e->repl = 0; }   /* (its bytes changed: the game's own again) */
 	}
