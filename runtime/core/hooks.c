@@ -87,6 +87,16 @@ void widen_aspect_reg(Cpu *c, int reg) {   /* a register holding the 960/544 con
 void (*hook_seq_arm)(const char *);
 void (*recomp_on_bad_call)(Cpu *, uint32_t);
 void (*hook_stall_long)(uint64_t stall_us);
+/* a game's own actions for the player (Uncharted: complete the open puzzle, unlock every chapter): buttons in the F10 menu's
+ * Game page and the bar's Game menu; the first is also F3 and Back + R1 on a gamepad -- all on the window's thread (window.c,
+ * overlay.cpp). A pack adds them from a constructor (game_action_add) */
+GameAction hook_game_actions[GAME_ACTIONS_MAX];
+int hook_game_actions_n;
+void game_action_add(const char *name, const char *about, void (*fn)(void)) {
+	if (hook_game_actions_n < GAME_ACTIONS_MAX) hook_game_actions[hook_game_actions_n++] = (GameAction){name, about, fn};
+}
+void game_action_run(int i) { if (i >= 0 && i < hook_game_actions_n) hook_game_actions[i].fn(); }
+void game_action_request(void) { game_action_run(0); }
 
 /* ---- Sony's shader patcher (libgxm, a recompiled module: MOD_HOOKS). RECOMP_GXM_PATCHER_LOG=1: each fragment / vertex
  * program variant the game creates, with the frame -- whether a game creates them at load time (the shader prebuild's
@@ -119,4 +129,23 @@ void recomp_hook_gxm_register(Cpu *c) {
 	if (!gxm_patcher_log()) return;
 	const uint32_t g = c->r[1];
 	fprintf(stderr, "    gxm patcher: register gxp %#x type %u frame %llu\n", g, g ? (RD8(g + 0x8) & 0xf) : 0, (unsigned long long)display_frames());
+}
+/* libgxm's ring wait (firmware libgxm_es4 +0xefa8: r1 a ring's status word, r2 the value its last kick leaves there; polls
+ * sceGpuSignalWait until they match), four of them in sceGxmFinish (+0x8f20: the context's rings at +0x3fc/+0x400 ...
+ * +0x47c/+0x480). The host draws a scene at its kick and writes the status words then (gpu.c kick), the notifications held
+ * for visibility counts at the latest when the game waits (gfx_vis_settle) -- so a word still short after that will never
+ * come. Uncharted (2026-11-01): skipping a cutscene in chapter 2 called sceGxmFinish with one such word, and its main thread
+ * spun there for good (245 million sceGpuSignalWait, a black screen; the same hang after a cutscene and a death once
+ * blamed on its debug menu). Here: up to 0.5 s for the word after settling, then the expected value is written -- the
+ * work it stands for is done -- and the ring, its value and the caller logged once per ring (a pack's MOD_HOOKS lists it). */
+void recomp_hook_gxm_ring_wait(Cpu *c) {
+	const uint32_t w = c->r[1], want = c->r[2];
+	if (!w || RD32(w) == want) return;
+	extern void gfx_vis_settle(void);
+	for (int i = 0; i < 500; i++) { gfx_vis_settle(); if (RD32(w) == want) return; plat_sleep_ns(1000000); }
+	static uint32_t said[16]; static int ns; int seen = 0;
+	for (int i = 0; i < ns; i++) if (said[i] == w) seen = 1;
+	if (!seen && ns < 16) said[ns++] = w;
+	if (!seen || getenv("RECOMP_GXM_RING_LOG")) fprintf(stderr, "    gxm: frame %llu ring status %#x stays %#x, its kick left %#x: written now (from %#x)\n", (unsigned long long)display_frames(), w, RD32(w), want, c->r[14]);
+	WR32(w, want);
 }

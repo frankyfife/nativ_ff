@@ -109,6 +109,9 @@ appears only once.
   pauses while it's open.
 - **F1**: the frame-rate overlay.
 - **F2**: cycle the render scale (sharper picture, more GPU work).
+- **F3**, or Back + R1 on a controller: the game's own action, where it has one. In Uncharted it completes the
+  puzzle on screen (charcoal rubbings, tile and lock puzzles and the like), as if solved. The in-game menu's Game
+  page has it as a button too, beside Uncharted's "Unlock every chapter" (for the main menu's Chapter Select).
 - **F5**: mark a moment for a bug report (see below).
 - **F7**: switch the camera's light on or off, for Uncharted's hold-it-to-the-light puzzles.
 - **F8**: switch direct mouse aim on or off (the mouse turns the game's camera itself, rather than acting as a stick).

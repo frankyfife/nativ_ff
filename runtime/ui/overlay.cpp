@@ -73,6 +73,10 @@ int window_get_fullscreen(void); void window_set_fullscreen(int on);
 int window_raw_look(void); void window_set_raw_look(int on);
 int window_controls_count(void);
 int window_gyro_present(void);
+/* core/hooks.c: the game's own actions for the player (a pack adds them; Uncharted: complete the open puzzle, unlock every
+ * chapter) -- the first also F3, Back + R1 */
+typedef struct { const char *name, *about; void (*fn)(void); } GameAction;
+extern GameAction hook_game_actions[]; extern int hook_game_actions_n; void game_action_run(int i);
 void motion_recenter(void);
 void window_controls_row(int i, const char **action, const char **key, const char **pad);
 /* gfx_gpu.c: the GPU backend's internal resolution (1-gfx_gpu_render_scale_max) and F2's own cycle */
@@ -389,6 +393,13 @@ static void page_game(void) {
 		ui::row("Texture sharpening", "Sharper detail in the game's textures. 0 is the game's own. From the next start.");
 		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##tsharp", &P.tsharp, 0.0f, 1.5f, "%.2f")) set_float(&P.tsharp, "texture_sharpen", P.tsharp);
 	}
+	for (int i = 0; i < hook_game_actions_n; i++) {   /* (a pack's hooks.c: Uncharted completes the open puzzle, unlocks every chapter) */
+		const GameAction &a = hook_game_actions[i];
+		ui::row(a.name, a.about ? a.about : "");
+		ImGui::PushID(i);
+		if (ImGui::Button("Do it")) { game_action_run(i); overlay_close(); }
+		ImGui::PopID();
+	}
 	if (game_option("debug_menu")) {
 		ui::row("Debug menu", "The developers' debug menu (the 1.03 update only). Experimental: with it on, the game can hang after a cutscene or a death. From the next start.");
 		{ bool on = P.debug != 0; if (ui::toggle("dbgm", &on)) { P.debug = on; settings_set_int("debug_menu", on); settings_save(); } }
@@ -466,8 +477,12 @@ static void reference_table(const char *id, int (*count)(void), void (*row)(int,
 	}
 	ImGui::EndTable();
 }
-static int shortcuts_count(void) { return (int)(sizeof g_shortcuts / sizeof g_shortcuts[0]); }
-static void shortcuts_row(int i, const char **a, const char **k, const char **p) { *a = g_shortcuts[i][0]; *k = g_shortcuts[i][1]; *p = g_shortcuts[i][2]; }
+static const int g_shortcuts_n = (int)(sizeof g_shortcuts / sizeof g_shortcuts[0]);
+static int shortcuts_count(void) { return g_shortcuts_n + (hook_game_actions_n > 0); }   /* (and the game's first own action, when it has one) */
+static void shortcuts_row(int i, const char **a, const char **k, const char **p) {
+	if (i >= g_shortcuts_n) { *a = hook_game_actions[0].name; *k = "F3"; *p = "Back + R1"; return; }
+	*a = g_shortcuts[i][0]; *k = g_shortcuts[i][1]; *p = g_shortcuts[i][2];
+}
 static void page_controls(void) {
 	prefs_load();
 	section_label("Input");
@@ -691,6 +706,7 @@ static void menu_view(void) {
 	if (game_option("fov")) { ImGui::TextDisabled("Field of view"); ImGui::SetNextItemWidth(170); if (ImGui::SliderFloat("##fov", &P.fov, 0.75f, 1.5f, "%.2fx")) set_fov(P.fov); }
 	if (game_option("view_distance")) { ImGui::TextDisabled("View distance"); ImGui::SetNextItemWidth(170); if (ImGui::SliderFloat("##view", &P.view, 1.0f, 3.0f, "%.2fx")) set_view(P.view); }
 	if (game_option("scenery_detail")) { ImGui::TextDisabled("Scenery detail"); ImGui::SetNextItemWidth(170); if (ImGui::SliderFloat("##scen", &P.scen, 1.0f, 8.0f, "%.1fx")) set_scen(P.scen); }
+	for (int i = 0; i < hook_game_actions_n; i++) if (ImGui::MenuItem(hook_game_actions[i].name, i == 0 ? "F3" : nullptr)) game_action_run(i);
 	if (game_option("character_detail")) { ImGui::TextDisabled("Character detail"); ImGui::SetNextItemWidth(170); if (ImGui::SliderFloat("##chr", &P.chr, 1.0f, 8.0f, "%.1fx")) set_chr(P.chr); }
 	if (ImGui::BeginMenu("Frame rate")) {
 		if (ImGui::MenuItem("30", nullptr, P.fr < 60)) set_frame_rate(30);

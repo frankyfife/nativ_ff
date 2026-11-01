@@ -962,7 +962,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 	if (settings_int("fullscreen", 0)) SDL_SetWindowFullscreen(win, true);
 	if (gpu) overlay_init(gpu, win, SDL_GetGPUSwapchainTextureFormat(gpu, win));
 	SDL_Gamepad *pad = 0;
-	int pad_back = 0, pad_start = 0, pad_combo_latch = 0;
+	int pad_back = 0, pad_start = 0, pad_combo_latch = 0, pad_r1 = 0, pad_action_latch = 0;
 	uint64_t last_overlay_t = 0;
 	active = 1;
 	Game g = {fn, arg};
@@ -996,6 +996,10 @@ void window_run(void *(*fn)(void *), void *arg) {
 			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_START) pad_start = 1;
 			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_UP && e.gbutton.button == SDL_GAMEPAD_BUTTON_START) { pad_start = 0; pad_combo_latch = 0; }
 			if (pad_back && pad_start && !pad_combo_latch) { pad_combo_latch = 1; overlay_toggle(); if (overlay_is_open()) { buttons = 0; touch_down = 0; gamepad_touch_release(); } }
+			/* Back + R1: the game's own action (hooks.c's first game action; Uncharted: complete the open puzzle), as F3 */
+			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) pad_r1 = 1;
+			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_UP && (e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER || e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK)) { if (e.gbutton.button != SDL_GAMEPAD_BUTTON_BACK) pad_r1 = 0; pad_action_latch = 0; }
+			if (pad_back && pad_r1 && !pad_action_latch && !overlay_is_open()) { extern void game_action_request(void); pad_action_latch = 1; game_action_request(); }
 			/* exclusive while open: the menu gets every key/mouse/gamepad event instead of the game
 			 * (which is paused anyway -- display.c) */
 			if (overlay_is_open()) { overlay_process_event(&e); continue; }
@@ -1032,6 +1036,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 			if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F9) {   /* a VERIFY build's hand-held count window (verify.c sets window_f9) */
 				if (window_f9) window_f9(); else fprintf(stderr, "F9: count windows need the verify build (vitarecomp build <title> verify)\n");
 			}
+			if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F3) { extern void game_action_request(void); game_action_request(); }   /* the game's own action (hooks.c; Uncharted: complete the open puzzle) */
 			if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F8) raw_look_toggle();   /* the experimental raw mouse look (hooks.c) */
 			if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F4) { extern void gfx_gpu_fsr_toggle(void); gfx_gpu_fsr_toggle(); }   /* FSR 3.1 anti-aliasing off and on, live (RECOMP_FSR: gfx_gpu.c) */
 			if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F7) { extern void camera_light_toggle(void); camera_light_toggle(); }   /* the rear camera's lamp (camera.c: Uncharted's hold-it-to-the-light puzzles) */

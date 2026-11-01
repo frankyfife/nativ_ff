@@ -21,6 +21,13 @@ This is a fork of [TheLostPantheon/nativ](https://github.com/TheLostPantheon/nat
 - **Other languages.** The EU release's main program is byte-identical to the US one (1.00 and 1.03), so a US copy
   plays with the EU release's `gamedata.bin` and `patch.bin`, which carry German, French, Italian, Dutch and UK
   English voices and text. `RECOMP_LANGUAGE` sets the system language the game sees; the pack uses 4, German.
+- **Complete the open puzzle.** F3, Back + R1 on a controller, or a button in the in-game menu completes the puzzle on
+  screen (charcoal rubbings, tile, cryptex, combination-lock, memory and parchment puzzles, all made for the touch
+  screen). It runs the game's own developer cheat, `ForceCompleteActivePuzzle`, so the puzzle is saved as solved
+  and the story goes on as after a solve.
+- **Unlock every chapter.** A button in the in-game menu (Game) runs the game's own developer cheat `Unlock`: every
+  chapter not finished yet is marked finished on the difficulty being played and saved, so the main menu's Chapter
+  Select offers them all. Chapters finished on a harder difficulty keep it.
 - **Debug menu** (1.03, experimental): the community's one-byte debug-menu patch as a game option, off by default.
   With it on the game can hang after a cutscene or a death.
 

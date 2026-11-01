@@ -427,6 +427,71 @@ void recomp_ihook_uc_path_end(Cpu *c, int reg) {
 void recomp_ihook_uc_rub_wait_floor(Cpu *c, int reg) {
 	if (reg >= 0 && reg <= 14 && (int32_t)c->r[reg] < 0) c->r[reg] = 0;
 }
+/* Complete the open puzzle: F3, Back + R1 or the F10 menu's button (hook_game_action, runtime/core/hooks.c) -- the charcoal
+ * rubbings, tile, cryptex, combination-lock, memory and parchment puzzles are made for the touch screen and fiddly with a
+ * mouse or a pad (2026-11-01). The game's own developers' cheat, the Lua function ForceCompleteActivePuzzle (fn_81082c7a
+ * in 1.00): the current puzzle ([uc_cur_puzzle]) -> its vtable +0x1b4, cPuzzle::ForceComplete (fn_81082604: the puzzle's
+ * progress saved as 100%, then its own Finish, vtable +0x1b0) -- as scripts would have called it, so the story goes on as
+ * after a solve. Called from the base cPuzzle update every kind of puzzle runs each frame (uc_pz_update: fn_81081ba2,
+ * 1.03 fn_8107d4a4; this in r0) once the puzzle has begun (+0x108), not from the window's thread; a request no puzzle
+ * takes within 2 s lapses, so it can't finish one met later. */
+static volatile int uc_pz_skip; static volatile uint64_t uc_pz_skip_at;
+static void uc_pz_skip_request(void) {
+	extern void overlay_toast_titled(const char *title, const char *body, double seconds);
+	uint32_t cur = game_addr("uc_cur_puzzle"), p = cur ? RD32(cur) : 0;
+	if (!p) { overlay_toast_titled("No puzzle open", "F3 / Back + R1 completes a puzzle while it is on screen.", 2.5); return; }
+	uc_pz_skip_at = display_frames(); uc_pz_skip = 1;
+}
+void recomp_hook_uc_pz_update(Cpu *c) {
+	if (!uc_pz_skip) return;
+	if (display_frames() > uc_pz_skip_at + 120) { uc_pz_skip = 0; return; }
+	uint32_t p = c->r[0], cur = game_addr("uc_cur_puzzle");
+	if (!cur || p != RD32(cur) || !RD8(p + 0x108)) return;
+	uc_pz_skip = 0;
+	extern uint32_t guest_call(Cpu *parent, uint32_t fn, uint32_t a0, uint32_t a1);
+	extern void overlay_toast_titled(const char *title, const char *body, double seconds);
+	fprintf(stderr, "uc puzzle: frame %llu completing %#x (ForceComplete %#x)\n", (unsigned long long)display_frames(), p, RD32(RD32(p) + 0x1b4));
+	guest_call(c, RD32(RD32(p) + 0x1b4), p, 0);
+	overlay_toast_titled("Puzzle completed", 0, 2.0);
+}
+/* Unlock every chapter: the F10 menu's second button (game_action_add, runtime/core/hooks.c) -- the debug menu that could do it
+ * hangs the game (2026-11-01). The game's own developers' cheat, the Lua function Unlock (fn_81111efc in 1.00 -> fn_811103be),
+ * on the chapter manager ([[uc_game] + 0x1560]: +0x24..+0x28 its chapters, each one's +0x24 the difficulty it was beaten on,
+ * 6 never; +0x44 the difficulty being played): every chapter marked beaten on that difficulty, then the progress saved. Here
+ * only the chapters not beaten yet, so one beaten on a harder difficulty keeps it -- and the last of them through the game's
+ * own BeatChapter (uc_beat_chapter: fn_81110672, 1.03 fn_81107b60; marks it, saves). Done on the game's thread as the chapter
+ * select asks how many chapters there are (the Lua function GetChapterCount: uc_chapter_count, fn_8111155a, 1.03
+ * fn_81108948), so it lists them all as it opens. */
+static volatile int uc_unlock_req;
+static void uc_unlock_request(void) {
+	extern void overlay_toast_titled(const char *title, const char *body, double seconds);
+	uc_unlock_req = 1;
+	overlay_toast_titled("Unlocking every chapter", "They open up as the main menu's Chapter Select is shown next (reopen it if it is on screen).", 4.0);
+}
+void recomp_hook_uc_chapter_count(Cpu *c) {
+	if (!uc_unlock_req) return;
+	uc_unlock_req = 0;
+	extern uint32_t guest_call(Cpu *parent, uint32_t fn, uint32_t a0, uint32_t a1);
+	extern void overlay_toast_titled(const char *title, const char *body, double seconds);
+	uint32_t g = game_addr("uc_game"), beat = game_addr("uc_beat_chapter");
+	uint32_t m = g && RD32(g) ? RD32(RD32(g) + 0x1560) : 0;
+	if (!m || !beat) return;
+	uint32_t v = RD32(m + 0x24), n = v ? (RD32(m + 0x28) - v) / 4 : 0, d = RD32(m + 0x44), last = ~0u, k = 0;
+	for (uint32_t i = 0; i < n && i < 128; i++) {
+		uint32_t ch = RD32(v + 4 * i);
+		if (!ch || RD32(ch + 0x24) != 6) continue;
+		if (last != ~0u) WR32(RD32(v + 4 * last) + 0x24, d);
+		last = i; k++;
+	}
+	fprintf(stderr, "uc chapters: frame %llu %u of %u not beaten, marked beaten on difficulty %u (save slot %u)\n", (unsigned long long)display_frames(), k, n, d, RD8(m + 0x34));
+	if (last == ~0u) { overlay_toast_titled("Every chapter is open already", 0, 2.5); return; }
+	guest_call(c, beat, m, last);
+	overlay_toast_titled("Every chapter unlocked", 0, 2.5);
+}
+__attribute__((constructor)) static void uc_actions_register(void) {
+	game_action_add("Complete the open puzzle", "F3, or Back + R1 on a controller, at any time. Here it closes this menu and happens as the game goes on.", uc_pz_skip_request);
+	game_action_add("Unlock every chapter", "Every chapter not finished yet is marked finished on the difficulty being played, so Chapter Select offers them all, and saved. Chapters finished on a harder difficulty keep it.", uc_unlock_request);
+}
 /* Uncharted 1.03's debug menu (the community's rePatch "debug menu patch", 2022: one byte of the 1.03 main program,
  * movs r0, #1 -> #0 at 0x8110a2c8, the end of fn_8110a280): the same change without touching the program, when
  * "debug_menu" is set (settings.ini debug_menu = 1, or RECOMP_UC_DEBUG_MENU=1). With it on the game hung after a cutscene
